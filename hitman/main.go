@@ -67,7 +67,6 @@ func getConsumerGroup(client sarama.Client, topic string, topicOffsets map[int32
 	brokers := client.Brokers()
 
 	consumersOffset := map[string]map[int32]int64{}
-
 	broker := brokers[0]
 	listResp, err := broker.ListGroups(&sarama.ListGroupsRequest{})
 	if err != nil {
@@ -80,7 +79,7 @@ func getConsumerGroup(client sarama.Client, topic string, topicOffsets map[int32
 		if err != nil {
 			log.Fatal(err)
 		}
-		offsetReq := &sarama.OffsetFetchRequest{ConsumerGroup: consumerGroup}
+		offsetReq := &sarama.OffsetFetchRequest{ConsumerGroup: consumerGroup, Version: 1}
 		for partition := range topicOffsets {
 			offsetReq.AddPartition(topic, partition)
 		}
