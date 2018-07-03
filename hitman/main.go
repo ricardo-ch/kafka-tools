@@ -2,20 +2,23 @@ package main
 
 import (
 	"log"
+	"time"
 
 	"github.com/Shopify/sarama"
 	"github.com/davecgh/go-spew/spew"
 )
 
 var (
-	offset    = int64(1)
-	partition = int32(1)
-	topic     = "test-francois"
-
+	topic           = "test-francois"
+	topicSink       = "test-francois-2"
 	bootstrapserver = []string{"rm-be-k8k73.beta.local:9092"}
+	contract        = func(partition int32, offset int64) bool {
+		return offset == 8
+	}
 )
 
 func main() {
+	var err error
 	cfg := sarama.NewConfig()
 	cfg.Version = sarama.V1_1_0_0
 	client, err := sarama.NewClient(bootstrapserver, cfg)
@@ -23,32 +26,65 @@ func main() {
 		log.Fatal(err)
 	}
 
-	topicsOffset := getCurrentTopicOffset(client)
-	consumerGroups := getConsumerGroup(client, topic, topicsOffset)
-	spew.Dump(consumerGroups)
-
-	//
-	//deleteReq := &sarama.DeleteRecordsRequest{
-	//	Topics: map[string]*sarama.DeleteRecordsRequestTopic{
-	//		topic: {
-	//			PartitionOffsets:map[int32]int64{
-	//				partition:4,
-	//			},
-	//		},
-	//	},
-	//	Timeout:10 * time.Second,
-	//}
-	//deleteResp, err := broker.DeleteRecords(deleteReq)
-	//if err != nil {
-	//	log.Fatal(err)
-	//}
-
-}
-
-func getCurrentTopicOffset(client sarama.Client) map[int32]int64 {
-	partitions, err := client.Partitions(topic)
+	consumerGroups, err := getConsumerGroup(client, topic)
 	if err != nil {
 		log.Fatal(err)
+	}
+	spew.Dump(consumerGroups)
+
+	err = Clone(client, topic, topicSink, contract)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = cleanTopic(client, topic)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = Clone(client, topic, topicSink, func(partition int32, offset int64) bool { return false })
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	//TODO reset consumerGroup offset with consumerGroups var
+}
+
+func cleanTopic(client sarama.Client, topic string) error {
+	topicsOffset, err := getCurrentTopicOffset(client, topic)
+	if err != nil {
+		return err
+	}
+
+	// increment because deleteRecordRequest delete up to this offset, not the upper limit
+	for i := range topicsOffset {
+		topicsOffset[i]++
+	}
+
+	deleteReq := &sarama.DeleteRecordsRequest{
+		Topics: map[string]*sarama.DeleteRecordsRequestTopic{
+			topic: {
+				PartitionOffsets: topicsOffset,
+			},
+		},
+		Timeout: 10 * time.Second,
+	}
+
+	broker, err := client.Controller()
+	if err != nil {
+		return err
+	}
+	_, err = broker.DeleteRecords(deleteReq)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return nil
+}
+
+func getCurrentTopicOffset(client sarama.Client, topic string) (map[int32]int64, error) {
+	partitions, err := client.Partitions(topic)
+	if err != nil {
+		return nil, err
 	}
 
 	result := make(map[int32]int64, len(partitions))
@@ -56,37 +92,43 @@ func getCurrentTopicOffset(client sarama.Client) map[int32]int64 {
 	for _, partition := range partitions {
 		result[partition], err = client.GetOffset(topic, partition, sarama.OffsetNewest)
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
 	}
-	return result
+	return result, nil
 }
 
 // map[ConsumerGroup]map[Partition]Offset
-func getConsumerGroup(client sarama.Client, topic string, topicOffsets map[int32]int64) map[string]map[int32]int64 {
-	brokers := client.Brokers()
+func getConsumerGroup(client sarama.Client, topic string) (map[string]map[int32]int64, error) {
+	broker, err := client.Controller()
+	if err != nil {
+		return nil, err
+	}
+	topicPartitions, err := client.Partitions(topic)
+	if err != nil {
+		return nil, err
+	}
 
 	consumersOffset := map[string]map[int32]int64{}
-	broker := brokers[0]
 	listResp, err := broker.ListGroups(&sarama.ListGroupsRequest{})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	// list through all consumer to get only those which have a commit on this topic
 	// There is probably a way to have this list directly from kafka API but i can't find it
 	for consumerGroup := range listResp.Groups {
 		coordinator, err := client.Coordinator(consumerGroup)
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
 		offsetReq := &sarama.OffsetFetchRequest{ConsumerGroup: consumerGroup, Version: 1}
-		for partition := range topicOffsets {
+		for _, partition := range topicPartitions {
 			offsetReq.AddPartition(topic, partition)
 		}
 
 		offsetResp, err := coordinator.FetchOffset(offsetReq)
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
 
 		consumerPartitionsOffsets := map[int32]int64{}
@@ -100,41 +142,5 @@ func getConsumerGroup(client sarama.Client, topic string, topicOffsets map[int32
 			consumersOffset[consumerGroup] = consumerPartitionsOffsets
 		}
 	}
-	return consumersOffset
-}
-
-func getRecord(client sarama.Client, broker *sarama.Broker, cfg *sarama.Config) *sarama.Record {
-	fetchReq := sarama.FetchRequest{
-		Version:   4,
-		Isolation: sarama.ReadCommitted,
-	}
-	fetchReq.AddBlock(topic, partition, offset, cfg.Consumer.Fetch.Max)
-
-	fetchResp, err := broker.Fetch(&fetchReq)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	topicBlock, ok := fetchResp.Blocks[topic]
-	if !ok {
-		log.Fatal("response does not contains expected topic")
-	}
-	partitionBlock, ok := topicBlock[partition]
-	if !ok {
-		log.Fatal("response does not contains expected partition")
-	}
-
-	for _, recordSet := range partitionBlock.RecordsSet {
-		for _, record := range recordSet.RecordBatch.Records {
-			currentOffset := recordSet.RecordBatch.FirstOffset + record.OffsetDelta
-			if currentOffset < offset {
-				continue
-			}
-			if currentOffset > offset {
-				log.Fatal("couldn't find expected offset")
-			}
-			return record
-		}
-	}
-	return nil
+	return consumersOffset, nil
 }
