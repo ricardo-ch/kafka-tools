@@ -10,10 +10,10 @@ import (
 
 var (
 	topic           = "test-francois"
-	topicSink       = "test-francois-2"
+	topicSink       = "test-francois-2-tmp-doesnotexist-tabernacle"
 	bootstrapserver = []string{"rm-be-k8k73.beta.local:9092"}
 	contract        = func(partition int32, offset int64) bool {
-		return offset == 8
+		return offset == 15
 	}
 )
 
@@ -42,7 +42,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	err = Clone(client, topic, topicSink, func(partition int32, offset int64) bool { return false })
+	err = Clone(client, topicSink, topic, func(partition int32, offset int64) bool { return false })
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// TODO should I delete topic instead of cleaning it?
+	err = cleanTopic(client, topicSink)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -56,27 +62,26 @@ func cleanTopic(client sarama.Client, topic string) error {
 		return err
 	}
 
-	// increment because deleteRecordRequest delete up to this offset, not the upper limit
-	for i := range topicsOffset {
-		topicsOffset[i]++
-	}
+	//Delete by partition because need to query the leader
+	for partition, offset := range topicsOffset {
+		broker, err := client.Leader(topic, partition)
+		if err != nil {
+			return err
+		}
 
-	deleteReq := &sarama.DeleteRecordsRequest{
-		Topics: map[string]*sarama.DeleteRecordsRequestTopic{
-			topic: {
-				PartitionOffsets: topicsOffset,
+		deleteReq := &sarama.DeleteRecordsRequest{
+			Topics: map[string]*sarama.DeleteRecordsRequestTopic{
+				topic: {
+					PartitionOffsets: map[int32]int64{partition: offset},
+				},
 			},
-		},
-		Timeout: 10 * time.Second,
-	}
-
-	broker, err := client.Controller()
-	if err != nil {
-		return err
-	}
-	_, err = broker.DeleteRecords(deleteReq)
-	if err != nil {
-		log.Fatal(err)
+			Timeout: 10 * time.Second,
+		}
+		deleteResp, err := broker.DeleteRecords(deleteReq)
+		if err != nil {
+			log.Fatal(err)
+		}
+		spew.Dump(deleteResp)
 	}
 	return nil
 }

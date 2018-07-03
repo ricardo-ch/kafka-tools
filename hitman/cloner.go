@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/Shopify/sarama"
+	"github.com/ahmetb/go-linq"
 	errors "github.com/pkg/errors"
 )
 
@@ -83,7 +84,7 @@ loop:
 			msgP.Timestamp = msg.Timestamp
 			//TODO headers
 			producer.Input() <- msgP
-		case <-time.After(10 * time.Second):
+		case <-time.After(3 * time.Second):
 			break loop
 		}
 	}
@@ -146,13 +147,25 @@ func ensureTopics(client sarama.Client, topicSource string, topicSink string) er
 	if len(SourcePartitions) <= 0 {
 		return errors.New("topicSource does not exist?")
 	}
-	SinkPartitions, err := client.Partitions(topicSink)
+
+	// Need to list topics instead of just requesting partition because Partition request actually create the topic if not exist
+	topics, err := client.Topics()
 	if err != nil {
 		return err
 	}
-	if len(SinkPartitions) > 0 {
+	if linq.From(topics).Contains(topicSink) {
+		SinkPartitions, err := client.Partitions(topicSink)
+		if err != nil {
+			return err
+		}
+
 		if len(SinkPartitions) != len(SourcePartitions) {
 			return errors.New("topicSink already exist and is not copartitionned with topicSource")
+		}
+
+		err = cleanTopic(client, topicSink)
+		if err != nil {
+			return err
 		}
 		return nil
 	}
@@ -180,8 +193,13 @@ func ensureTopics(client sarama.Client, topicSource string, topicSink string) er
 	}
 
 	tErr, ok := createTopicResp.TopicErrors[topicSink]
-	if ok && tErr != nil {
+	if ok && tErr != nil && tErr.Err != sarama.ErrNoError {
 		return errors.Wrap(tErr.Err, getStringOrDefault(tErr.ErrMsg))
+	}
+
+	err = cleanTopic(client, topicSink)
+	if err != nil {
+		return err
 	}
 	return nil
 }
