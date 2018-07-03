@@ -1,14 +1,16 @@
 package main
 
 import (
-	"github.com/Shopify/sarama"
 	"log"
+
+	"github.com/Shopify/sarama"
 	"github.com/davecgh/go-spew/spew"
 )
+
 var (
-	offset = int64(1)
+	offset    = int64(1)
 	partition = int32(1)
-	topic ="test-francois"
+	topic     = "test-francois"
 
 	bootstrapserver = []string{"rm-be-k8k73.beta.local:9092"}
 )
@@ -22,8 +24,9 @@ func main() {
 	}
 
 	topicsOffset := getCurrentTopicOffset(client)
-	spew.Dump(topicsOffset)
-	getConsumer(client)
+	consumerGroups := getConsumerGroup(client, topic, topicsOffset)
+	spew.Dump(consumerGroups)
+
 	//
 	//deleteReq := &sarama.DeleteRecordsRequest{
 	//	Topics: map[string]*sarama.DeleteRecordsRequestTopic{
@@ -40,9 +43,9 @@ func main() {
 	//	log.Fatal(err)
 	//}
 
-
 }
-func getCurrentTopicOffset(client sarama.Client) map[int32]int64{
+
+func getCurrentTopicOffset(client sarama.Client) map[int32]int64 {
 	partitions, err := client.Partitions(topic)
 	if err != nil {
 		log.Fatal(err)
@@ -59,37 +62,52 @@ func getCurrentTopicOffset(client sarama.Client) map[int32]int64{
 	return result
 }
 
-type ConsumerOffset struct {
-	offset int64
-	partition int32
-}
-
-func getConsumerGroup(client sarama.Client) {
+// map[ConsumerGroup]map[Partition]Offset
+func getConsumerGroup(client sarama.Client, topic string, topicOffsets map[int32]int64) map[string]map[int32]int64 {
 	brokers := client.Brokers()
-	req := sarama.ListGroupsRequest{}
 
-	consumers := map[string]sarama.{}
+	consumersOffset := map[string]map[int32]int64{}
 
-	for _, broker := range brokers {
-		listResp, err := broker.ListGroups(&req)
+	broker := brokers[0]
+	listResp, err := broker.ListGroups(&sarama.ListGroupsRequest{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	// list through all consumer to get only those which have a commit on this topic
+	// There is probably a way to have this list directly from kafka API but i can't find it
+	for consumerGroup := range listResp.Groups {
+		coordinator, err := client.Coordinator(consumerGroup)
 		if err != nil {
 			log.Fatal(err)
 		}
-		for consumer := range listResp.Groups {
-
-
-			consumers = append(consumers, consumer)
+		offsetReq := &sarama.OffsetFetchRequest{ConsumerGroup: consumerGroup}
+		for partition := range topicOffsets {
+			offsetReq.AddPartition(topic, partition)
 		}
 
-		spew.Dump(listResp)
-		break
+		offsetResp, err := coordinator.FetchOffset(offsetReq)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		consumerPartitionsOffsets := map[int32]int64{}
+		for partition, fetchBlock := range offsetResp.Blocks[topic] {
+			if fetchBlock.Offset >= 0 {
+				// filter out group that has no commited offset for this topic
+				consumerPartitionsOffsets[partition] = fetchBlock.Offset
+			}
+		}
+		if len(consumerPartitionsOffsets) > 0 {
+			consumersOffset[consumerGroup] = consumerPartitionsOffsets
+		}
 	}
+	return consumersOffset
 }
 
-func getRecord(client sarama.Client, broker *sarama.Broker, cfg *sarama.Config) *sarama.Record{
+func getRecord(client sarama.Client, broker *sarama.Broker, cfg *sarama.Config) *sarama.Record {
 	fetchReq := sarama.FetchRequest{
-		Version:4,
-		Isolation:sarama.ReadCommitted,
+		Version:   4,
+		Isolation: sarama.ReadCommitted,
 	}
 	fetchReq.AddBlock(topic, partition, offset, cfg.Consumer.Fetch.Max)
 
