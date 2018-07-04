@@ -9,7 +9,7 @@ import (
 
 	"github.com/Shopify/sarama"
 	"github.com/ahmetb/go-linq"
-	errors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 )
 
 // return true to kill message
@@ -21,17 +21,11 @@ func Clone(client sarama.Client, topicSource string, topicSink string, contract 
 	if err != nil {
 		return err
 	}
-	consumer, err := newConsumer(client)
+	consumer, err := newConsumer()
 	if err != nil {
 		return err
 	}
 	defer consumer.Close()
-
-	producer, err := newProducer(client)
-	if err != nil {
-		return err
-	}
-	defer producer.Close()
 
 	sourcePartitions, err := consumer.Partitions(topicSource)
 	if err != nil {
@@ -41,15 +35,15 @@ func Clone(client sarama.Client, topicSource string, topicSink string, contract 
 	wg := sync.WaitGroup{}
 	for _, partition := range sourcePartitions {
 		partitionConsumer, err := consumer.ConsumePartition(topicSource, partition, sarama.OffsetOldest)
-		defer partitionConsumer.Close()
 		if err != nil {
 			return err
 		}
 
 		wg.Add(1)
 		go func() {
+			defer partitionConsumer.Close()
 			defer wg.Done()
-			clonePartition(partitionConsumer, producer, topicSink, contract)
+			clonePartition(partitionConsumer, topicSink, contract)
 		}()
 	}
 
@@ -59,7 +53,13 @@ func Clone(client sarama.Client, topicSource string, topicSink string, contract 
 	return nil
 }
 
-func clonePartition(partitionConsumer sarama.PartitionConsumer, producer sarama.AsyncProducer, topicSink string, istTarget KillContract) {
+func clonePartition(partitionConsumer sarama.PartitionConsumer, topicSink string, istTarget KillContract) {
+	producer, err := newManualProducer()
+	defer producer.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 loop:
 	for {
 		select {
@@ -81,6 +81,7 @@ loop:
 			if msg.Key != nil {
 				msgP.Key = sarama.ByteEncoder(msg.Key)
 			}
+			msgP.Partition = msg.Partition
 			msgP.Timestamp = msg.Timestamp
 			//TODO headers
 			producer.Input() <- msgP
@@ -90,20 +91,19 @@ loop:
 	}
 }
 
-func newConsumer(client sarama.Client) (sarama.Consumer, error) {
+func newConsumer() (sarama.Consumer, error) {
 	cfg := sarama.NewConfig()
 	cfg.Version = sarama.V1_1_0_0
 	cfg.Consumer.Offsets.Initial = sarama.OffsetOldest
 	cfg.Consumer.Fetch.Max = 1024 * 1024 * 2 //2 Mo
 	cfg.Consumer.Fetch.Default = 1024 * 512
 	cfg.Consumer.Fetch.Min = 1024 * 10
-	cfg.Producer.Partitioner = sarama.NewCustomHashPartitioner(MurmurHasher)
 
-	consumer, err := sarama.NewConsumer(getAddrFromClient(client), cfg)
+	consumer, err := sarama.NewConsumer(bootstrapserver, cfg)
 	return consumer, err
 }
 
-func newProducer(client sarama.Client) (sarama.AsyncProducer, error) {
+func newManualProducer() (sarama.AsyncProducer, error) {
 	cfg := sarama.NewConfig()
 	cfg.Version = sarama.V1_1_0_0
 	cfg.Producer.Return.Successes = false
@@ -111,8 +111,9 @@ func newProducer(client sarama.Client) (sarama.AsyncProducer, error) {
 	cfg.Producer.RequiredAcks = sarama.WaitForLocal
 	cfg.Net.MaxOpenRequests = 1
 	cfg.Producer.Flush.Frequency = 100 * time.Millisecond
+	cfg.Producer.Partitioner = func(topic string) sarama.Partitioner { return sarama.NewManualPartitioner(topic) }
 
-	producer, err := sarama.NewAsyncProducer(getAddrFromClient(client), cfg)
+	producer, err := sarama.NewAsyncProducer(bootstrapserver, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -129,14 +130,6 @@ func newProducer(client sarama.Client) (sarama.AsyncProducer, error) {
 	}()
 
 	return producer, nil
-}
-
-func getAddrFromClient(client sarama.Client) []string {
-	addrs := []string{}
-	for _, broker := range client.Brokers() {
-		addrs = append(addrs, broker.Addr())
-	}
-	return addrs
 }
 
 func ensureTopics(client sarama.Client, topicSource string, topicSink string) error {
@@ -176,7 +169,7 @@ func ensureTopics(client sarama.Client, topicSource string, topicSink string) er
 		Version: 2,
 		Timeout: 10 * time.Second,
 		TopicDetails: map[string]*sarama.TopicDetail{
-			topicSink: &sarama.TopicDetail{
+			topicSink: {
 				NumPartitions:     int32(len(SourcePartitions)),
 				ReplicationFactor: 1,
 			},

@@ -6,14 +6,16 @@ import (
 
 	"github.com/Shopify/sarama"
 	"github.com/davecgh/go-spew/spew"
+	"github.com/pkg/errors"
 )
 
 var (
 	topic           = "test-francois"
-	topicSink       = "test-francois-2-tmp-doesnotexist-tabernacle"
-	bootstrapserver = []string{"rm-be-k8k73.beta.local:9092"}
-	contract        = func(partition int32, offset int64) bool {
-		return offset == 15
+	topicSink       = "test-francois-2"
+	bootstrapserver = []string{"kafka:9092"}
+
+	contract = func(partition int32, offset int64) bool {
+		return offset == 3 && partition == 0
 	}
 )
 
@@ -26,11 +28,21 @@ func main() {
 		log.Fatal(err)
 	}
 
-	consumerGroups, err := getConsumerGroup(client, topic)
+	consumerGroupsOffsets, err := getConsumerGroup(client, topic)
 	if err != nil {
 		log.Fatal(err)
 	}
-	spew.Dump(consumerGroups)
+
+	// Do that at the beginning for fast-fail.
+	// Do that again at the last moment for best effort check
+	err = ensureConsumerGroupsInactive(client, getConsumerListFromOffsetList(consumerGroupsOffsets))
+	if err != nil {
+		log.Fatal(err)
+	}
+	//TODO use acl to block write on topic
+
+	// This middleware on contract predict new offset of consumer group once topic source is clean again
+	contract = makeUpdateGroupOffsetOnKill(contract, &consumerGroupsOffsets)
 
 	err = Clone(client, topic, topicSink, contract)
 	if err != nil {
@@ -53,7 +65,97 @@ func main() {
 		log.Fatal(err)
 	}
 
-	//TODO reset consumerGroup offset with consumerGroups var
+	err = updateConsumerGroupOffset(client, topic, consumerGroupsOffsets)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func makeUpdateGroupOffsetOnKill(contract KillContract, consumerGroupsOffsets *map[string]map[int32]int64) KillContract {
+	if consumerGroupsOffsets == nil || len(*consumerGroupsOffsets) <= 0 {
+		log.Println("no consumergroup to update")
+		return contract
+	}
+
+	return func(partition int32, offset int64) bool {
+		target := contract(partition, offset)
+		for consumerGroup := range *consumerGroupsOffsets {
+			consumerGroupOffset := (*consumerGroupsOffsets)[consumerGroup][partition]
+			if !target && offset <= consumerGroupOffset {
+				(*consumerGroupsOffsets)[consumerGroup][partition]++
+			}
+		}
+		return target
+	}
+}
+
+func ensureConsumerGroupsInactive(client sarama.Client, consumerGroups []string) error {
+	activeMember := 0
+
+	for _, consumerGroup := range consumerGroups {
+		broker, err := client.Coordinator(consumerGroup)
+		if err != nil {
+			return err
+		}
+
+		req := sarama.DescribeGroupsRequest{
+			Groups: consumerGroups,
+		}
+		description, err := broker.DescribeGroups(&req)
+		if err != nil {
+			return err
+		}
+		if len(description.Groups) <= 0 {
+			return errors.New("no response for describe group")
+		}
+
+		if len(description.Groups[0].Members) > 0 {
+			log.Printf("membe %v is active: ", description.Groups[0].State)
+			activeMember++
+		}
+	}
+	if activeMember > 0 {
+		return errors.New("witnesses are watching")
+	}
+	return nil
+}
+
+func updateConsumerGroupOffset(client sarama.Client, topic string, newConsumerGroupOffsets map[string]map[int32]int64) error {
+	log.Printf("beginning reset offset on topic %s to these values: %+v", topic, newConsumerGroupOffsets)
+
+	err := ensureConsumerGroupsInactive(client, getConsumerListFromOffsetList(newConsumerGroupOffsets))
+	if err != nil {
+		return err
+	}
+
+	for consumerGroup, partitions := range newConsumerGroupOffsets {
+		offsetManager, err := sarama.NewOffsetManagerFromClient(consumerGroup, client)
+		if err != nil {
+			return err
+		}
+		for partition, offset := range partitions {
+			partitionManager, err := offsetManager.ManagePartition(topic, partition)
+			if err != nil {
+				return err
+			}
+
+			partitionManager.MarkOffset(offset, "")
+			err = partitionManager.Close()
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func getConsumerListFromOffsetList(consumerGroupsOffsets map[string]map[int32]int64) []string {
+	var consumerGroups []string
+	for consumerGroup := range consumerGroupsOffsets {
+		consumerGroups = append(consumerGroups, consumerGroup)
+	}
+	return consumerGroups
 }
 
 func cleanTopic(client sarama.Client, topic string) error {
