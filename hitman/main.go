@@ -11,7 +11,7 @@ import (
 
 var (
 	topic           = "test-francois"
-	topicSink       = "test-francois-2"
+	topicSink       = "test-francois-2" //TODO use specific topic with loads of partition in there
 	bootstrapserver = []string{"kafka:9092"}
 
 	contract = func(partition int32, offset int64) bool {
