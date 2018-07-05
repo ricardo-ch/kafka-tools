@@ -21,36 +21,25 @@ var NoKillContract = func(partition int32, offset int64) bool { return false }
 // accept a KillContract parameter that define which message NOT to copy
 // return newConsumerGroupsOffsets which can be use to commit offset of consumerGroup on intermediateTopic to keep them at the same message
 func CloneTopic(client sarama.Client, topicSource string, topicSink string, contract KillContract, oldGroupsOffsets map[string]map[int32]int64) (map[string]map[int32]int64, error) {
-	consumer, err := newConsumer(getBrokersFromClient(client))
-	if err != nil {
-		return nil, err
-	}
-	defer consumer.Close()
-
-	sourcePartitions, err := consumer.Partitions(topicSource)
+	sourcePartitions, err := client.Partitions(topicSource)
 	if err != nil {
 		return nil, err
 	}
 
-	lock := sync.Mutex{}
+	lock := &sync.Mutex{}
 	newGroupsOffsets, err := initGroupOffsetAtTopicEnd(client, topicSink, getConsumerListFromOffsetList(oldGroupsOffsets))
 	if err != nil {
 		return nil, err
 	}
 
-	wg := sync.WaitGroup{}
+	wg := &sync.WaitGroup{}
 	for _, partition := range sourcePartitions {
-		partitionConsumer, err := consumer.ConsumePartition(topicSource, partition, sarama.OffsetOldest)
-		if err != nil {
-			return nil, err
-		}
 
 		wg.Add(1)
-		go func() {
-			defer partitionConsumer.Close()
+		go func(partition int32) {
 			defer wg.Done()
 
-			offsetDeltas, err := clonePartition(client, partitionConsumer, topicSink, contract, oldGroupsOffsets)
+			offsetDeltas, err := clonePartition(client, topicSource, topicSink, partition, contract, oldGroupsOffsets)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -58,11 +47,9 @@ func CloneTopic(client sarama.Client, topicSource string, topicSink string, cont
 			lock.Lock()
 			defer lock.Unlock()
 			for group := range offsetDeltas {
-				for partition := range offsetDeltas[group] {
-					newGroupsOffsets[group][partition] += offsetDeltas[group][partition]
-				}
+				newGroupsOffsets[group][partition] += offsetDeltas[group][partition]
 			}
-		}()
+		}(partition)
 	}
 
 	wg.Wait()
@@ -75,14 +62,29 @@ func CloneTopic(client sarama.Client, topicSource string, topicSink string, cont
 // technically, since it consume a partition and produce to the exxact same on the other topic
 // 	it will only return offset of one partition
 //	but still return map[group]map[partition]offset because it is easier to manipulate the same type
-func clonePartition(client sarama.Client, partitionConsumer sarama.PartitionConsumer, topicSink string, istTarget KillContract, oldGroupOffset map[string]map[int32]int64) (newGroupOffsetDelta map[string]map[int32]int64, err error) {
+func clonePartition(
+	client sarama.Client, topicSource, topicSink string, partition int32, istTarget KillContract, oldGroupOffset map[string]map[int32]int64) (
+	newGroupOffsetDelta map[string]map[int32]int64, err error) {
+
 	newGroupOffsetDelta = map[string]map[int32]int64{}
 
-	producer, err := newManualProducer(getBrokersFromClient(client))
-	defer producer.Close()
+	consumer, err := newConsumer(getBrokersFromClient(client))
 	if err != nil {
 		return nil, err
 	}
+	defer consumer.Close()
+
+	partitionConsumer, err := consumer.ConsumePartition(topicSource, partition, sarama.OffsetOldest)
+	if err != nil {
+		return nil, err
+	}
+	defer partitionConsumer.Close()
+
+	producer, err := newManualProducer(getBrokersFromClient(client))
+	if err != nil {
+		return nil, err
+	}
+	defer producer.Close()
 
 	//TODO instead of timeout we can know for sure the end of a topicSource if we query topicSource offset
 loop:
