@@ -32,7 +32,7 @@ func CloneTopic(client sarama.Client, topicSource string, topicSink string, cont
 		return nil, err
 	}
 
-	//	lock := sync.Mutex{}
+	lock := sync.Mutex{}
 	newGroupsOffsets, err = initGroupOffsetAtTopicEnd(client, topicSink, getConsumerListFromOffsetList(oldGroupsOffsets))
 	if err != nil {
 		return nil, err
@@ -46,23 +46,23 @@ func CloneTopic(client sarama.Client, topicSource string, topicSink string, cont
 		}
 
 		wg.Add(1)
-		//go func() {
-		defer partitionConsumer.Close()
-		defer wg.Done()
+		go func() {
+			defer partitionConsumer.Close()
+			defer wg.Done()
 
-		offsetDeltas, err := clonePartition(client, partitionConsumer, topicSink, contract, oldGroupsOffsets)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		//	lock.Lock()
-		//	defer lock.Unlock()
-		for group := range offsetDeltas {
-			for partition := range offsetDeltas[group] {
-				newGroupsOffsets[group][partition] += offsetDeltas[group][partition]
+			offsetDeltas, err := clonePartition(client, partitionConsumer, topicSink, contract, oldGroupsOffsets)
+			if err != nil {
+				log.Fatal(err)
 			}
-		}
-		//}()
+
+			lock.Lock()
+			defer lock.Unlock()
+			for group := range offsetDeltas {
+				for partition := range offsetDeltas[group] {
+					newGroupsOffsets[group][partition] += offsetDeltas[group][partition]
+				}
+			}
+		}()
 	}
 
 	//wg.Wait()
