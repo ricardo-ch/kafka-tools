@@ -1,65 +1,73 @@
+// Copyright © 2018 NAME HERE <EMAIL ADDRESS>
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
+	"github.com/spf13/cobra"
 	"log"
+	"strings"
 )
 
+type Target struct {
+	partition int32
+	offset    int64
+}
+
+// rootCmd represents the base command when called without any subcommands
 var (
-	topicSource       = "test-francois"
-	intermediateTopic = "kafka-hitman-work" //TODO use specific topicSource with loads of partition in there
-	bootstrapserver   = []string{"kafka:9092"}
+	rootCmd = &cobra.Command{
+		Use:   "",
+		Short: "remove a message from kafka",
+		Long:  ``,
+		// Uncomment the following line if your bare application
+		// has an action associated with it:
+		RunE: func(cmd *cobra.Command, args []string) error {
+			brokers := strings.Split(brokerList, ",")
 
-	contract = func(partition int32, offset int64) bool {
-		return offset == 3 && partition == 0
+			err := KillMessage(brokers, topic, func(partition int32, offset int64) bool {
+				return partition == target.partition && offset == target.offset
+			})
+
+			return err
+		},
 	}
+
+	brokerList        string
+	topic             string
+	intermediateTopic string
+	target            Target
 )
+
+func init() {
+	rootCmd.Flags().StringVarP(&brokerList, "brokers", "b", "", "comma separated broker list")
+	rootCmd.MarkFlagRequired("broker")
+
+	rootCmd.Flags().StringVarP(&topic, "topic", "t", "", "topic")
+	rootCmd.MarkFlagRequired("topic")
+
+	rootCmd.Flags().StringVarP(&intermediateTopic, "iTopic", "i", "kafka-hitman-work", "intermediate topic used for work")
+
+	rootCmd.Flags().Int32VarP(&target.partition, "partition", "p", 0, "partition to target")
+	rootCmd.MarkFlagRequired("partition") //For now
+	rootCmd.Flags().Int64VarP(&target.offset, "offset", "o", 0, "offset to target")
+	rootCmd.MarkFlagRequired("offset") //For now
+
+}
 
 func main() {
-	client, err := NewClient(bootstrapserver)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	consumerGroupsOffsets, err := getConsumerGroup(client, topicSource)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Do that at the beginning for fast-fail.
-	// Do that again at the last moment for best effort check
-	err = ensureConsumerGroupsInactive(client, GetConsumerListFromOffsetList(consumerGroupsOffsets))
-	if err != nil {
-		log.Fatal(err)
-	}
-	//TODO use acl to block write on topicSource
-
-	err = EnsureTopics(client, topicSource, intermediateTopic)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	newConsumerGroupOffset, err := CloneTopic(client, topicSource, intermediateTopic, contract, consumerGroupsOffsets)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = cleanTopic(client, topicSource)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	newConsumerGroupOffset, err = CloneTopic(client, intermediateTopic, topicSource, NoKillContract, newConsumerGroupOffset)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// TODO should I delete topicSource instead of cleaning it?
-	err = cleanTopic(client, intermediateTopic)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = updateConsumerGroupOffset(client, topicSource, newConsumerGroupOffset)
+	err := rootCmd.Execute()
 	if err != nil {
 		log.Fatal(err)
 	}

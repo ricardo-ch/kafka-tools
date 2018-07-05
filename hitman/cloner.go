@@ -21,7 +21,7 @@ var NoKillContract = func(partition int32, offset int64) bool { return false }
 // accept a KillContract parameter that define which message NOT to copy
 // return newConsumerGroupsOffsets which can be use to commit offset of consumerGroup on intermediateTopic to keep them at the same message
 func CloneTopic(client sarama.Client, topicSource string, topicSink string, contract KillContract, oldGroupsOffsets map[string]map[int32]int64) (newGroupsOffsets map[string]map[int32]int64, err error) {
-	consumer, err := NewConsumer()
+	consumer, err := newConsumer(getBrokersFromClient(client))
 	if err != nil {
 		return nil, err
 	}
@@ -33,7 +33,7 @@ func CloneTopic(client sarama.Client, topicSource string, topicSink string, cont
 	}
 
 	lock := sync.Mutex{}
-	newGroupsOffsets, err = initGroupOffsetAtTopicEnd(client, topicSink, GetConsumerListFromOffsetList(oldGroupsOffsets))
+	newGroupsOffsets, err = initGroupOffsetAtTopicEnd(client, topicSink, getConsumerListFromOffsetList(oldGroupsOffsets))
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func CloneTopic(client sarama.Client, topicSource string, topicSink string, cont
 func clonePartition(client sarama.Client, partitionConsumer sarama.PartitionConsumer, topicSink string, istTarget KillContract, oldGroupOffset map[string]map[int32]int64) (newGroupOffsetDelta map[string]map[int32]int64, err error) {
 	newGroupOffsetDelta = map[string]map[int32]int64{}
 
-	producer, err := NewManualProducer()
+	producer, err := newManualProducer(getBrokersFromClient(client))
 	defer producer.Close()
 	if err != nil {
 		return nil, err
@@ -125,7 +125,7 @@ loop:
 }
 
 func initGroupOffsetAtTopicEnd(client sarama.Client, topic string, groups []string) (map[string]map[int32]int64, error) {
-	topicOffset, err := getCurrentTopicOffset(client, topic)
+	topicOffset, err := GetCurrentTopicOffset(client, topic)
 	if err != nil {
 		return nil, err
 	}

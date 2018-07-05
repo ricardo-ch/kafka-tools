@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-func cleanTopic(client sarama.Client, topic string) error {
-	topicsOffset, err := getCurrentTopicOffset(client, topic)
+func CleanTopic(client sarama.Client, topic string) error {
+	topicsOffset, err := GetCurrentTopicOffset(client, topic)
 	if err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func cleanTopic(client sarama.Client, topic string) error {
 }
 
 // returns map[partition]offset
-func getCurrentTopicOffset(client sarama.Client, topic string) (map[int32]int64, error) {
+func GetCurrentTopicOffset(client sarama.Client, topic string) (map[int32]int64, error) {
 	partitions, err := client.Partitions(topic)
 	if err != nil {
 		return nil, err
@@ -58,7 +58,7 @@ func getCurrentTopicOffset(client sarama.Client, topic string) (map[int32]int64,
 }
 
 // returns map[ConsumerGroup]map[Partition]Offset
-func getConsumerGroup(client sarama.Client, topic string) (map[string]map[int32]int64, error) {
+func GetConsumerGroup(client sarama.Client, topic string) (map[string]map[int32]int64, error) {
 	broker, err := client.Controller()
 	if err != nil {
 		return nil, err
@@ -104,7 +104,7 @@ func getConsumerGroup(client sarama.Client, topic string) (map[string]map[int32]
 	return consumersOffset, nil
 }
 
-func ensureConsumerGroupsInactive(client sarama.Client, consumerGroups []string) error {
+func EnsureConsumerGroupsInactive(client sarama.Client, consumerGroups []string) error {
 	activeMember := 0
 
 	for _, consumerGroup := range consumerGroups {
@@ -135,10 +135,10 @@ func ensureConsumerGroupsInactive(client sarama.Client, consumerGroups []string)
 	return nil
 }
 
-func updateConsumerGroupOffset(client sarama.Client, topic string, newConsumerGroupOffsets map[string]map[int32]int64) error {
+func UpdateConsumerGroupOffset(client sarama.Client, topic string, newConsumerGroupOffsets map[string]map[int32]int64) error {
 	log.Printf("beginning reset offset on topicSource %s to these values: %+v", topic, newConsumerGroupOffsets)
 
-	err := ensureConsumerGroupsInactive(client, GetConsumerListFromOffsetList(newConsumerGroupOffsets))
+	err := EnsureConsumerGroupsInactive(client, getConsumerListFromOffsetList(newConsumerGroupOffsets))
 	if err != nil {
 		return err
 	}
