@@ -5,13 +5,12 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/pkg/errors"
 )
 
 var (
-	topic           = "test-francois"
-	topicSink       = "test-francois-2" //TODO use specific topic with loads of partition in there
+	topicSource     = "test-francois"
+	topicSink       = "test-francois-2" //TODO use specific topicSource with loads of partition in there
 	bootstrapserver = []string{"kafka:9092"}
 
 	contract = func(partition int32, offset int64) bool {
@@ -28,7 +27,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	consumerGroupsOffsets, err := getConsumerGroup(client, topic)
+	consumerGroupsOffsets, err := getConsumerGroup(client, topicSource)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -39,53 +38,37 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	//TODO use acl to block write on topic
+	//TODO use acl to block write on topicSource
 
-	// This middleware on contract predict new offset of consumer group once topic source is clean again
-	contract = makeUpdateGroupOffsetOnKill(contract, &consumerGroupsOffsets)
-
-	err = Clone(client, topic, topicSink, contract)
+	err = ensureTopics(client, topicSource, topicSink)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = cleanTopic(client, topic)
+	newConsumerGroupOffset, err := CloneTopic(client, topicSource, topicSink, contract, consumerGroupsOffsets)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = Clone(client, topicSink, topic, func(partition int32, offset int64) bool { return false })
+	err = cleanTopic(client, topicSource)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// TODO should I delete topic instead of cleaning it?
+	newConsumerGroupOffset, err = CloneTopic(client, topicSink, topicSource, func(partition int32, offset int64) bool { return false }, newConsumerGroupOffset)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// TODO should I delete topicSource instead of cleaning it?
 	err = cleanTopic(client, topicSink)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = updateConsumerGroupOffset(client, topic, consumerGroupsOffsets)
+	err = updateConsumerGroupOffset(client, topicSource, newConsumerGroupOffset)
 	if err != nil {
 		log.Fatal(err)
-	}
-}
-
-func makeUpdateGroupOffsetOnKill(contract KillContract, consumerGroupsOffsets *map[string]map[int32]int64) KillContract {
-	if consumerGroupsOffsets == nil || len(*consumerGroupsOffsets) <= 0 {
-		log.Println("no consumergroup to update")
-		return contract
-	}
-
-	return func(partition int32, offset int64) bool {
-		target := contract(partition, offset)
-		for consumerGroup := range *consumerGroupsOffsets {
-			consumerGroupOffset := (*consumerGroupsOffsets)[consumerGroup][partition]
-			if !target && offset <= consumerGroupOffset {
-				(*consumerGroupsOffsets)[consumerGroup][partition]++
-			}
-		}
-		return target
 	}
 }
 
@@ -121,7 +104,7 @@ func ensureConsumerGroupsInactive(client sarama.Client, consumerGroups []string)
 }
 
 func updateConsumerGroupOffset(client sarama.Client, topic string, newConsumerGroupOffsets map[string]map[int32]int64) error {
-	log.Printf("beginning reset offset on topic %s to these values: %+v", topic, newConsumerGroupOffsets)
+	log.Printf("beginning reset offset on topicSource %s to these values: %+v", topic, newConsumerGroupOffsets)
 
 	err := ensureConsumerGroupsInactive(client, getConsumerListFromOffsetList(newConsumerGroupOffsets))
 	if err != nil {
@@ -183,11 +166,14 @@ func cleanTopic(client sarama.Client, topic string) error {
 		if err != nil {
 			log.Fatal(err)
 		}
-		spew.Dump(deleteResp)
+		if deleteResp.Topics[topic].Partitions[partition].Err != sarama.ErrNoError {
+			return deleteResp.Topics[topic].Partitions[partition].Err
+		}
 	}
 	return nil
 }
 
+// returns map[partition]offset
 func getCurrentTopicOffset(client sarama.Client, topic string) (map[int32]int64, error) {
 	partitions, err := client.Partitions(topic)
 	if err != nil {
@@ -205,7 +191,7 @@ func getCurrentTopicOffset(client sarama.Client, topic string) (map[int32]int64,
 	return result, nil
 }
 
-// map[ConsumerGroup]map[Partition]Offset
+// returns map[ConsumerGroup]map[Partition]Offset
 func getConsumerGroup(client sarama.Client, topic string) (map[string]map[int32]int64, error) {
 	broker, err := client.Controller()
 	if err != nil {
@@ -221,7 +207,7 @@ func getConsumerGroup(client sarama.Client, topic string) (map[string]map[int32]
 	if err != nil {
 		return nil, err
 	}
-	// list through all consumer to get only those which have a commit on this topic
+	// list through all consumer to get only those which have a commit on this topicSource
 	// There is probably a way to have this list directly from kafka API but i can't find it
 	for consumerGroup := range listResp.Groups {
 		coordinator, err := client.Coordinator(consumerGroup)
@@ -241,7 +227,7 @@ func getConsumerGroup(client sarama.Client, topic string) (map[string]map[int32]
 		consumerPartitionsOffsets := map[int32]int64{}
 		for partition, fetchBlock := range offsetResp.Blocks[topic] {
 			if fetchBlock.Offset >= 0 {
-				// filter out group that has no commited offset for this topic
+				// filter out group that has no commited offset for this topicSource
 				consumerPartitionsOffsets[partition] = fetchBlock.Offset
 			}
 		}
