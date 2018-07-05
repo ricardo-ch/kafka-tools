@@ -1,4 +1,4 @@
-package main
+package lib
 
 import (
 	"github.com/Shopify/sarama"
@@ -6,6 +6,12 @@ import (
 	"github.com/pkg/errors"
 	"time"
 )
+
+var intermediateTopic = "kafka-hitman-work"
+
+func SetIntermediateTopic(topic string) {
+	intermediateTopic = topic
+}
 
 func KillMessage(brokers []string, topic string, contract KillContract) error {
 	client, err := newClient(brokers)

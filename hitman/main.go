@@ -15,6 +15,7 @@
 package main
 
 import (
+	hitman "github.com/ricardo-ch/kafka-tools/hitman/lib"
 	"github.com/spf13/cobra"
 	"log"
 	"strings"
@@ -35,8 +36,11 @@ var (
 		// has an action associated with it:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			brokers := strings.Split(brokerList, ",")
+			if intermediateTopic != "" {
+				hitman.SetIntermediateTopic(intermediateTopic)
+			}
 
-			err := KillMessage(brokers, topic, func(partition int32, offset int64) bool {
+			err := hitman.KillMessage(brokers, topic, func(partition int32, offset int64) bool {
 				return partition == target.partition && offset == target.offset
 			})
 
@@ -57,7 +61,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&topic, "topic", "t", "", "topic")
 	rootCmd.MarkFlagRequired("topic")
 
-	rootCmd.Flags().StringVarP(&intermediateTopic, "iTopic", "i", "kafka-hitman-work", "intermediate topic used for work")
+	rootCmd.Flags().StringVarP(&intermediateTopic, "iTopic", "i", "", "intermediate topic used for work")
 
 	rootCmd.Flags().Int32VarP(&target.partition, "partition", "p", 0, "partition to target")
 	rootCmd.MarkFlagRequired("partition") //For now
