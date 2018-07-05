@@ -101,8 +101,8 @@ func ensureTopics(client sarama.Client, topicSource string, intermediateTopic st
 			Timeout: 10 * time.Second,
 			TopicDetails: map[string]*sarama.TopicDetail{
 				intermediateTopic: {
-					NumPartitions:     int32(len(SourcePartitions)), //TODO moar
-					ReplicationFactor: 1,                            //TODO
+					NumPartitions:     20,
+					ReplicationFactor: 1, //TODO
 				},
 			},
 		}
