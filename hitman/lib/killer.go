@@ -52,7 +52,6 @@ func KillMessage(brokers []string, topic string, contract KillContract) error {
 		return err
 	}
 
-	// TODO should I delete topicSource instead of cleaning it?
 	err = CleanTopic(client, intermediateTopic)
 	if err != nil {
 		return err

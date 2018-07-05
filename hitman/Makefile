@@ -7,3 +7,8 @@ rundep:
 	kafka-topics.sh --zookeeper zookeeper:2181 --topic test-francois --create --partitions 2 --replication-factor 1
 	kafka-console-producer.sh --broker-list kafka:9092 --topic test-francois --property "parse.key=true" --property "key.separator=#"  < input-test
 	kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic test-francois --from-beginning --timeout-ms=2000 --consumer-property group.id=testcg
+
+
+.PHONY: mockkafka
+mockkafka:
+	 mockery -case "underscore" -dir $$GOPATH/src/github.com/Shopify/sarama -output ./lib/mocks -name="(Client)|(AsyncProducer)|(Consumer)|(OffsetManager)|(PartitionConsumer)|(PartitionOffsetManager)"
