@@ -13,51 +13,103 @@ func SetIntermediateTopic(topic string) {
 	intermediateTopic = topic
 }
 
-func KillMessage(brokers []string, topic string, contract KillContract) error {
+// CreateWorkTopic is the first step of process
+// create a temporary topic in the expected state so that you can assert the operation is doing what you expect
+// return offset of groups on this temporary topic matching message of original topic
+func CreateWorkTopic(brokers []string, topic string, contract KillContract) (map[string]map[int32]int64, error) {
 	client, err := newClient(brokers)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	consumerGroupsOffsets, err := GetConsumerGroup(client, topic)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Do that at the beginning for fast-fail.
 	// Do that again at the last moment for best effort check
 	err = EnsureConsumerGroupsInactive(client, getConsumerListFromOffsetList(consumerGroupsOffsets))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	//TODO use acl to block write on topicSource
 
 	err = ensureTopics(client, topic, intermediateTopic)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	newConsumerGroupOffset, err := CloneTopic(client, topic, intermediateTopic, contract, consumerGroupsOffsets)
+	tmpGroupOffset, err := CloneTopic(client, topic, intermediateTopic, contract, consumerGroupsOffsets)
+	if err != nil {
+		return nil, err
+	}
+	return tmpGroupOffset, nil
+}
+
+// Commit delete data from `topic` and put new one from the workTopic
+// This is the risky step that definitely alter your data, you should check that every thing is ok previously
+// 	tmpGroupOffset: offset of consumer group on workTopic. Used to match new offset of consumer groups after transformation
+func Commit(brokers []string, topic string, tmpGroupOffset map[string]map[int32]int64) (err error) {
+	client, err := newClient(brokers)
 	if err != nil {
 		return err
 	}
+
+	// Do that at the beginning for fast-fail.
+	// Do that again at the last moment for best effort check
+	err = EnsureConsumerGroupsInactive(client, getConsumerListFromOffsetList(tmpGroupOffset))
+	if err != nil {
+		return err
+	}
+	//TODO use acl to block write on topicSource
 
 	err = CleanTopic(client, topic)
 	if err != nil {
 		return err
 	}
 
-	newConsumerGroupOffset, err = CloneTopic(client, intermediateTopic, topic, NoKillContract, newConsumerGroupOffset)
+	newGroupOffset, err := CloneTopic(client, intermediateTopic, topic, NoKillContract, tmpGroupOffset)
 	if err != nil {
 		return err
 	}
 
+	err = UpdateConsumerGroupOffset(client, topic, newGroupOffset)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// CleanUp remove data from work topic.
+// Once `Commit` and `Cleanup` are called, data is irremediably altered
+func CleanUp(brokers []string) error {
+	client, err := newClient(brokers)
+	if err != nil {
+		return err
+	}
 	err = CleanTopic(client, intermediateTopic)
 	if err != nil {
 		return err
 	}
+	return nil
+}
 
-	err = UpdateConsumerGroupOffset(client, topic, newConsumerGroupOffset)
+// Kill a message in one step.
+// You should may call all 3 steps independently if you want more control over the process. In order these are:
+//	- CreateWorkTopic
+//	- Commit
+//	- Cleanup
+func KillMessage(brokers []string, topic string, contract KillContract) error {
+	tmpGroupOffset, err := CreateWorkTopic(brokers, topic, contract)
+	if err != nil {
+		return err
+	}
+	err = Commit(brokers, topic, tmpGroupOffset)
+	if err != nil {
+		return err
+	}
+	err = CleanUp(brokers)
 	if err != nil {
 		return err
 	}
