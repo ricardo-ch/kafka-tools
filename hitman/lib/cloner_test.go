@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"testing"
+	"time"
 )
 
 func Test_CloneTopic(t *testing.T) {
@@ -61,14 +62,42 @@ func Test_CloneTopic(t *testing.T) {
 	}, newOffset)
 }
 
-func Test_clonePartition(t *testing.T) {
+func Test_clonePartition_NoKill(t *testing.T) {
+	// ---- Mocks ----
+	now := time.Now()
 	client := new(mocks.Client)
 
-	msgCh := make(chan *sarama.ConsumerMessage)
+	inMsgCh := make(chan *sarama.ConsumerMessage, 50)
+	outMsgCh := make(chan *sarama.ProducerMessage, 50)
+
+	inMsgCh <- &sarama.ConsumerMessage{
+		Offset:    4,
+		Partition: 1,
+		Key:       []byte("key1"),
+		Value:     []byte("value1"),
+		Topic:     "topic1",
+		Timestamp: now,
+	}
+	inMsgCh <- &sarama.ConsumerMessage{
+		Offset:    5,
+		Partition: 1,
+		Key:       []byte("key2"),
+		Value:     []byte("value2"),
+		Topic:     "topic1",
+		Timestamp: now,
+	}
+	inMsgCh <- &sarama.ConsumerMessage{
+		Offset:    6,
+		Partition: 1,
+		Key:       []byte("key3"),
+		Value:     []byte("value3"),
+		Topic:     "topic1",
+		Timestamp: now,
+	}
 
 	partitionConsumer := new(mocks.PartitionConsumer)
 	partitionConsumer.On("Close").Return(nil)
-	partitionConsumer.On("Messages").Return(msgCh)
+	partitionConsumer.On("Messages").Return((<-chan *sarama.ConsumerMessage)(inMsgCh))
 
 	consumer := new(mocks.Consumer)
 	consumer.On("ConsumePartition", "topic1", mock.Anything, sarama.OffsetOldest).Return(partitionConsumer, nil)
@@ -76,6 +105,7 @@ func Test_clonePartition(t *testing.T) {
 
 	producer := new(mocks.AsyncProducer)
 	producer.On("Close").Return(nil)
+	producer.On("Input").Return((chan<- *sarama.ProducerMessage)(outMsgCh))
 
 	patch := monkey.Patch(newConsumer, func(brokers []string) (sarama.Consumer, error) {
 		return consumer, nil
@@ -92,12 +122,55 @@ func Test_clonePartition(t *testing.T) {
 	})
 	defer patch.Unpatch()
 
-	newManualProducer
+	patch = monkey.Patch(GetCurrentMaxTopicOffset, func(client sarama.Client, topic string) (map[int32]int64, error) {
+		return map[int32]int64{0: 42, 1: 7}, nil
+	})
+	defer patch.Unpatch()
 
-	target := func(partition int32, offset int64) bool { return true }
-	oldGroupOffset := map[string]map[int32]int64{}
+	patch = monkey.Patch(GetCurrentMinTopicOffset, func(client sarama.Client, topic string) (map[int32]int64, error) {
+		return map[int32]int64{0: 42, 1: 4}, nil
+	})
+	defer patch.Unpatch()
 
+	target := func(partition int32, offset int64) bool { return partition == 1 && offset == 5 }
+	oldGroupOffset := map[string]map[int32]int64{
+		"group1": {
+			0: 40,
+			1: 5,
+		},
+	}
+
+	// ---- Test ----
 	offsetDelta, err := clonePartition(client, "topic1", "topic2", 1, target, oldGroupOffset)
-	//TODO clonePartition not unit testable as is. implement getTopicOffset method
+	assert.NoError(t, err)
 
+	// ---- Asserts ----
+
+	// 3 messages on topic:
+	//	- 1 is before consumerGroup offset
+	//	- 1 is deleted
+	//	- 1 is after
+	// -> delta of 1
+	assert.Equal(t, map[string]map[int32]int64{"group1": {1: 1}}, offsetDelta)
+
+	close(outMsgCh)
+	var msgs []*sarama.ProducerMessage
+	for msg := range outMsgCh {
+		msgs = append(msgs, msg)
+	}
+	assert.Equal(t, []*sarama.ProducerMessage{
+		{
+			Partition: 1,
+			Key:       sarama.ByteEncoder("key1"),
+			Value:     sarama.ByteEncoder("value1"),
+			Topic:     "topic2",
+			Timestamp: now,
+		}, {
+			Partition: 1,
+			Key:       sarama.ByteEncoder("key3"),
+			Value:     sarama.ByteEncoder("value3"),
+			Topic:     "topic2",
+			Timestamp: now,
+		},
+	}, msgs)
 }
