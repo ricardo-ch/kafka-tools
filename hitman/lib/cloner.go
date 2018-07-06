@@ -2,12 +2,9 @@ package lib
 
 import (
 	"fmt"
-	"log"
-	"time"
-
-	"sync"
-
 	"github.com/Shopify/sarama"
+	"github.com/pkg/errors"
+	"log"
 )
 
 // return true to kill message
@@ -26,47 +23,50 @@ func CloneTopic(client sarama.Client, topicSource string, topicSink string, cont
 		return nil, err
 	}
 
-	lock := &sync.Mutex{}
 	newGroupsOffsets, err := initGroupOffsetAtTopicEnd(client, topicSink, getConsumerListFromOffsetList(oldGroupsOffsets))
 	if err != nil {
 		return nil, err
 	}
 
-	wg := &sync.WaitGroup{}
 	for _, partition := range sourcePartitions {
+		offsetDeltas, err := clonePartition(client, topicSource, topicSink, partition, contract, oldGroupsOffsets)
+		if err != nil {
+			log.Fatal(err)
+		}
 
-		wg.Add(1)
-		go func(partition int32) {
-			defer wg.Done()
-
-			offsetDeltas, err := clonePartition(client, topicSource, topicSink, partition, contract, oldGroupsOffsets)
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			lock.Lock()
-			defer lock.Unlock()
-			for group := range offsetDeltas {
-				newGroupsOffsets[group][partition] += offsetDeltas[group][partition]
-			}
-		}(partition)
+		for group := range offsetDeltas {
+			newGroupsOffsets[group][partition] += offsetDeltas[group][partition]
+		}
 	}
 
-	wg.Wait()
 	fmt.Println("cloning done")
-	log.Printf("%+v\n", newGroupsOffsets)
-
 	return newGroupsOffsets, nil
 }
 
-// technically, since it consume a partition and produce to the exxact same on the other topic
+// clonePartition consume a partition on topicSource and output all messages as is on topicSink
+//	returns deltaOffset on topicSink for each consumerGroup
+//
+// technically, since it consume a partition and produce to the exact same on the other topic
 // 	it will only return offset of one partition
 //	but still return map[group]map[partition]offset because it is easier to manipulate the same type
 func clonePartition(
-	client sarama.Client, topicSource, topicSink string, partition int32, istTarget KillContract, oldGroupOffset map[string]map[int32]int64) (
-	newGroupOffsetDelta map[string]map[int32]int64, err error) {
+	client sarama.Client, topicSource, topicSink string, partition int32, istTarget KillContract, oldGroupOffset map[string]map[int32]int64) (map[string]map[int32]int64, error) {
 
-	newGroupOffsetDelta = map[string]map[int32]int64{}
+	newGroupOffsetDelta := map[string]map[int32]int64{}
+
+	maxTopicOffset, err := GetCurrentMaxTopicOffset(client, topicSource)
+	if err != nil {
+		return nil, err
+	}
+	maxOffset := maxTopicOffset[partition] - 1 // -1 because topic offset actually mean the offset of next posted message
+
+	minTopicOffset, err := GetCurrentMinTopicOffset(client, topicSource)
+	if err != nil {
+		return nil, err
+	}
+	if minTopicOffset[partition] > maxOffset {
+		return nil, nil // there is nothing to consume
+	}
 
 	consumer, err := newConsumer(getBrokersFromClient(client))
 	if err != nil {
@@ -86,52 +86,51 @@ func clonePartition(
 	}
 	defer producer.Close()
 
-	//TODO instead of timeout we can know for sure the end of a topicSource if we query topicSource offset
-loop:
-	for {
-		select {
-		case msg, open := <-partitionConsumer.Messages():
-			if !open {
-				continue
-			}
-			if istTarget(msg.Partition, msg.Offset) {
-				fmt.Printf("found tagrget, removing: %v\n", string(msg.Value))
-				continue
-			}
+	currentOffset := int64(0)
+	for msg := range partitionConsumer.Messages() {
+		currentOffset = msg.Offset
+		if istTarget(msg.Partition, msg.Offset) {
+			fmt.Printf("found tagrget, removing: %v\n", string(msg.Value))
+			continue
+		}
 
-			// Increment offset delta of consumer groups
-			for consumerGroup := range oldGroupOffset {
-				if msg.Offset < oldGroupOffset[consumerGroup][msg.Partition] {
-					if newGroupOffsetDelta[consumerGroup] == nil {
-						newGroupOffsetDelta[consumerGroup] = map[int32]int64{}
-					}
-					newGroupOffsetDelta[consumerGroup][msg.Partition]++
+		// Increment offset delta of consumer groups
+		for consumerGroup := range oldGroupOffset {
+			if msg.Offset < oldGroupOffset[consumerGroup][msg.Partition] {
+				if newGroupOffsetDelta[consumerGroup] == nil {
+					newGroupOffsetDelta[consumerGroup] = map[int32]int64{}
 				}
+				newGroupOffsetDelta[consumerGroup][msg.Partition]++
 			}
+		}
 
-			msgP := &sarama.ProducerMessage{
-				Topic: topicSink,
-			}
-			if msg.Value != nil {
-				msgP.Value = sarama.ByteEncoder(msg.Value)
-			}
-			if msg.Key != nil {
-				msgP.Key = sarama.ByteEncoder(msg.Key)
-			}
-			msgP.Partition = msg.Partition
-			msgP.Timestamp = msg.Timestamp
-			//TODO headers
-			producer.Input() <- msgP
-		case <-time.After(3 * time.Second):
-			break loop
+		msgP := &sarama.ProducerMessage{
+			Topic: topicSink,
+		}
+		if msg.Value != nil {
+			msgP.Value = sarama.ByteEncoder(msg.Value)
+		}
+		if msg.Key != nil {
+			msgP.Key = sarama.ByteEncoder(msg.Key)
+		}
+		msgP.Partition = msg.Partition
+		msgP.Timestamp = msg.Timestamp
+		//TODO headers
+		producer.Input() <- msgP
+
+		if currentOffset >= maxOffset {
+			break
 		}
 	}
 
+	if currentOffset < maxOffset {
+		return nil, errors.New("did not processed the whole topic")
+	}
 	return newGroupOffsetDelta, nil
 }
 
 func initGroupOffsetAtTopicEnd(client sarama.Client, topic string, groups []string) (map[string]map[int32]int64, error) {
-	topicOffset, err := GetCurrentTopicOffset(client, topic)
+	topicOffset, err := GetCurrentMaxTopicOffset(client, topic)
 	if err != nil {
 		return nil, err
 	}

@@ -49,7 +49,7 @@ func Test_GetCurrentTopicOffset(t *testing.T) {
 	client.On("GetOffset", "topic1", int32(0), sarama.OffsetNewest).Return(int64(42), nil)
 	client.On("GetOffset", "topic1", int32(1), sarama.OffsetNewest).Return(int64(6), nil)
 
-	offsets, err := GetCurrentTopicOffset(client, "topic1")
+	offsets, err := GetCurrentMaxTopicOffset(client, "topic1")
 	assert.NoError(t, err)
 	assert.Equal(t, map[int32]int64{0: int64(42), 1: int64(6)}, offsets)
 }

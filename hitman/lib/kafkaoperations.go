@@ -8,7 +8,7 @@ import (
 )
 
 func CleanTopic(client sarama.Client, topic string) error {
-	topicsOffset, err := GetCurrentTopicOffset(client, topic)
+	topicsOffset, err := GetCurrentMaxTopicOffset(client, topic)
 	if err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func CleanTopic(client sarama.Client, topic string) error {
 }
 
 // returns map[partition]offset
-func GetCurrentTopicOffset(client sarama.Client, topic string) (map[int32]int64, error) {
+func GetCurrentMaxTopicOffset(client sarama.Client, topic string) (map[int32]int64, error) {
 	partitions, err := client.Partitions(topic)
 	if err != nil {
 		return nil, err
@@ -50,6 +50,24 @@ func GetCurrentTopicOffset(client sarama.Client, topic string) (map[int32]int64,
 
 	for _, partition := range partitions {
 		result[partition], err = client.GetOffset(topic, partition, sarama.OffsetNewest)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+// returns map[partition]offset
+func GetCurrentMinTopicOffset(client sarama.Client, topic string) (map[int32]int64, error) {
+	partitions, err := client.Partitions(topic)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[int32]int64, len(partitions))
+
+	for _, partition := range partitions {
+		result[partition], err = client.GetOffset(topic, partition, sarama.OffsetOldest)
 		if err != nil {
 			return nil, err
 		}
