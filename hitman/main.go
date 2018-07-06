@@ -15,36 +15,88 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
+	"fmt"
 	hitman "github.com/ricardo-ch/kafka-tools/hitman/lib"
 	"github.com/spf13/cobra"
+	"io/ioutil"
 	"log"
+	"os"
 	"strings"
 )
+
+const tmpGroupOffsetFile = "tmpGroupOffset"
 
 type Target struct {
 	partition int32
 	offset    int64
 }
 
-// rootCmd represents the base command when called without any subcommands
 var (
 	rootCmd = &cobra.Command{
 		Use:   "",
 		Short: "remove a message from kafka",
 		Long:  ``,
-		// Uncomment the following line if your bare application
-		// has an action associated with it:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			brokers := strings.Split(brokerList, ",")
 			if intermediateTopic != "" {
 				hitman.SetIntermediateTopic(intermediateTopic)
 			}
 
-			err := hitman.KillMessage(brokers, topic, func(partition int32, offset int64) bool {
-				return partition == target.partition && offset == target.offset
-			})
+			var tmpGroupOffset map[string]map[int32]int64
+			var err error
 
-			return err
+			//step 1
+			if createWorkTopic {
+				tmpGroupOffset, err = hitman.CreateWorkTopic(brokers, topic, func(partition int32, offset int64) bool {
+					return partition == target.partition && offset == target.offset
+				})
+				if err != nil {
+					return err
+				}
+
+				err = saveTmpGroupOffset(tmpGroupOffset)
+				if err != nil {
+					return err
+				}
+			} else {
+				tmpGroupOffset, err = loadTmpGroupOffset()
+				if err != nil {
+					return err
+				}
+			}
+
+			//step 2
+			if commit {
+				if createWorkTopic {
+					if !askForConfirmation("you are about to delete all messages from your topic and create a bunch of new one, are you sure?") {
+						return nil
+					}
+				}
+
+				err := hitman.Commit(brokers, topic, tmpGroupOffset)
+				if err != nil {
+					return err
+				}
+			}
+
+			//step 3
+			if cleanUp {
+				if commit {
+					if !askForConfirmation("All that will be left is what you have in your topic, are you sure?") {
+						return nil
+					}
+				}
+
+				err := hitman.CleanUp(brokers)
+				if err != nil {
+					return err
+				}
+				os.Remove(tmpGroupOffsetFile)
+			}
+
+			return nil
 		},
 	}
 
@@ -52,6 +104,9 @@ var (
 	topic             string
 	intermediateTopic string
 	target            Target
+	createWorkTopic   bool
+	commit            bool
+	cleanUp           bool
 )
 
 func init() {
@@ -68,11 +123,53 @@ func init() {
 	rootCmd.Flags().Int64VarP(&target.offset, "offset", "o", 0, "offset to target")
 	rootCmd.MarkFlagRequired("offset") //For now
 
+	rootCmd.Flags().BoolVarP(&createWorkTopic, "workTopic", "w", false, "step1: create a temporary topic in expected state")
+	rootCmd.Flags().BoolVarP(&commit, "commit", "c", false, "step2: commit the temporary topic into your original topic")
+	rootCmd.Flags().BoolVarP(&cleanUp, "cleanup", "l", false, "step3: remove work topic")
+
 }
 
 func main() {
 	err := rootCmd.Execute()
 	if err != nil {
 		log.Fatal(err)
+	}
+}
+
+func saveTmpGroupOffset(tmpGroupOffset map[string]map[int32]int64) error {
+	output, err := json.Marshal(tmpGroupOffset)
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(tmpGroupOffsetFile, output, 0644)
+}
+
+func loadTmpGroupOffset() (map[string]map[int32]int64, error) {
+	input, err := ioutil.ReadFile(tmpGroupOffsetFile)
+	if err != nil {
+		return nil, err
+	}
+	tmpGroupOffset := map[string]map[int32]int64{}
+	err = json.Unmarshal(input, &tmpGroupOffset)
+	return tmpGroupOffset, err
+}
+
+func askForConfirmation(s string) bool {
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Printf("%s [y/n]: ", s)
+
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		response = strings.ToLower(strings.TrimSpace(response))
+
+		if response == "y" || response == "yes" {
+			return true
+		} else if response == "n" || response == "no" {
+			return false
+		}
 	}
 }
