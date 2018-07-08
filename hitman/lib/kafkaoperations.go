@@ -26,7 +26,7 @@ func CleanTopic(client sarama.Client, topic string) error {
 					PartitionOffsets: map[int32]int64{partition: offset},
 				},
 			},
-			Timeout: 10 * time.Second,
+			Timeout: 2 * time.Minute,
 		}
 		deleteResp, err := broker.DeleteRecords(deleteReq)
 		if err != nil {
@@ -91,6 +91,10 @@ func GetConsumerGroup(client sarama.Client, topic string) (map[string]map[int32]
 	if err != nil {
 		return nil, err
 	}
+	if listResp.Err != sarama.ErrNoError {
+		return nil, listResp.Err
+	}
+
 	// list through all consumer to get only those which have a commit on this topicSource
 	// There is probably a way to have this list directly from kafka API but i can't find it
 	for consumerGroup := range listResp.Groups {
@@ -110,12 +114,17 @@ func GetConsumerGroup(client sarama.Client, topic string) (map[string]map[int32]
 
 		consumerPartitionsOffsets := map[int32]int64{}
 		for partition, fetchBlock := range offsetResp.Blocks[topic] {
+			if fetchBlock.Err != sarama.ErrNoError {
+				return nil, fetchBlock.Err
+			}
+
 			if fetchBlock.Offset >= 0 {
-				// filter out group that has no commited offset for this topicSource
+				// filter out partition with no committed offset
 				consumerPartitionsOffsets[partition] = fetchBlock.Offset
 			}
 		}
 		if len(consumerPartitionsOffsets) > 0 {
+			// filter out group that has no committed offset for this topic
 			consumersOffset[consumerGroup] = consumerPartitionsOffsets
 		}
 	}
@@ -140,6 +149,9 @@ func EnsureConsumerGroupsInactive(client sarama.Client, consumerGroups []string)
 		}
 		if len(description.Groups) <= 0 {
 			return errors.New("no response for describe group")
+		}
+		if description.Groups[0].Err != sarama.ErrNoError {
+			return description.Groups[0].Err
 		}
 
 		if len(description.Groups[0].Members) > 0 {
