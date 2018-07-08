@@ -46,10 +46,15 @@ func newManualProducer(brokers []string) (sarama.AsyncProducer, error) {
 	cfg.Version = sarama.V1_1_0_0
 	cfg.Producer.Return.Successes = false
 	cfg.Producer.Return.Errors = true
-	cfg.Producer.RequiredAcks = sarama.WaitForLocal
+	cfg.Producer.RequiredAcks = sarama.WaitForAll
 	cfg.Net.MaxOpenRequests = 1
 	cfg.Producer.Flush.Frequency = 100 * time.Millisecond
 	cfg.Producer.Partitioner = func(topic string) sarama.Partitioner { return sarama.NewManualPartitioner(topic) }
+
+	// Currently there is no way to neither figure out the original message encoding nor using a different one for each messages
+	// However we may need to use one if message is big. May as well compress, in doubt
+	//TODO expose this in flags
+	cfg.Producer.Compression = sarama.CompressionGZIP
 
 	producer, err := sarama.NewAsyncProducer(brokers, cfg)
 	if err != nil {

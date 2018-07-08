@@ -105,7 +105,9 @@ func clonePartition(
 		}
 
 		msgP := &sarama.ProducerMessage{
-			Topic: topicSink,
+			Topic:     topicSink,
+			Partition: msg.Partition,
+			Timestamp: msg.Timestamp,
 		}
 		if msg.Value != nil {
 			msgP.Value = sarama.ByteEncoder(msg.Value)
@@ -113,11 +115,14 @@ func clonePartition(
 		if msg.Key != nil {
 			msgP.Key = sarama.ByteEncoder(msg.Key)
 		}
-		msgP.Partition = msg.Partition
-		msgP.Timestamp = msg.Timestamp
-		//TODO headers
-		producer.Input() <- msgP
 
+		for _, header := range msg.Headers {
+			if header != nil {
+				msgP.Headers = append(msgP.Headers, *header)
+			}
+		}
+
+		producer.Input() <- msgP
 		if currentOffset >= maxOffset {
 			break
 		}
