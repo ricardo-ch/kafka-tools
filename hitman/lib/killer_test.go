@@ -130,6 +130,6 @@ func Test_KillMessage_ok(t *testing.T) {
 		defer patch.Unpatch()
 		defer func() { assert.Equal(t, 1, nbCalled, "UpdateConsumerGroupOffset") }()
 	}
-	err := KillMessage([]string{}, "topic1", func(partition int32, offset int64) bool { return false })
+	err := KillMessage([]string{}, "topic1", func(msg *sarama.ConsumerMessage) bool { return false })
 	assert.NoError(t, err)
 }
