@@ -8,9 +8,9 @@ import (
 )
 
 // return true to kill message
-type KillContract func(partition int32, offset int64) bool
+type KillContract func(message *sarama.ConsumerMessage) bool
 
-var NoKillContract = func(partition int32, offset int64) bool { return false }
+var NoKillContract = func(message *sarama.ConsumerMessage) bool { return false }
 
 //TODO replace CloneTopic() with kafka-topicSource-cloner
 
@@ -89,7 +89,7 @@ func clonePartition(
 	currentOffset := int64(0)
 	for msg := range partitionConsumer.Messages() {
 		currentOffset = msg.Offset
-		if istTarget(msg.Partition, msg.Offset) {
+		if istTarget(msg) {
 			fmt.Printf("found tagrget, removing: %v\n", string(msg.Value))
 			continue
 		}
