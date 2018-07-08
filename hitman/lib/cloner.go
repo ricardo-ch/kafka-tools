@@ -91,7 +91,11 @@ func clonePartition(
 		currentOffset = msg.Offset
 		if istTarget(msg) {
 			fmt.Printf("found tagrget, removing: %v\n", string(msg.Value))
-			continue
+			if currentOffset >= maxOffset {
+				break
+			} else {
+				continue
+			}
 		}
 
 		// Increment offset delta of consumer groups
