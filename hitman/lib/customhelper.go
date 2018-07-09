@@ -36,8 +36,10 @@ func newConsumer(brokers []string) (sarama.Consumer, error) {
 	cfg.Consumer.Fetch.Max = 1024 * 1024 * 2 //2 Mo
 	cfg.Consumer.Fetch.Default = 1024 * 512
 	cfg.Consumer.Fetch.Min = 1024 * 10
+	cfg.Consumer.Return.Errors = true
 
 	consumer, err := sarama.NewConsumer(brokers, cfg)
+
 	return consumer, err
 }
 

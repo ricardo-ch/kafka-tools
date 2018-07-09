@@ -80,6 +80,12 @@ func clonePartition(
 	}
 	defer partitionConsumer.Close()
 
+	go func() {
+		for err := range partitionConsumer.Errors() {
+			log.Fatal(err)
+		}
+	}()
+
 	producer, err := newManualProducer(getBrokersFromClient(client))
 	if err != nil {
 		return nil, err
