@@ -132,6 +132,8 @@ func clonePartition(
 			}
 		}
 
+		printOk(fmt.Sprintf("partition:%v, offset:%v", msg.Partition, msg.Offset))
+
 		producer.Input() <- msgP
 		if currentOffset >= maxOffset {
 			break

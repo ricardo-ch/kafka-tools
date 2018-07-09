@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"fmt"
 	"github.com/Shopify/sarama"
 	"log"
 	"time"
@@ -82,4 +83,13 @@ func newClient(brokers []string) (sarama.Client, error) {
 	cfg := sarama.NewConfig()
 	cfg.Version = sarama.V1_1_0_0
 	return sarama.NewClient(brokers, cfg)
+}
+
+var counter = 0
+
+func printOk(s string) {
+	if counter%100 == 0 {
+		fmt.Println(s)
+	}
+	counter++
 }
