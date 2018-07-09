@@ -1,3 +1,7 @@
+.PHONY: build
+build:
+	CGO_ENABLED=0 go build -o ./hitman -a -ldflags '-s' -installsuffix cgo main.go
+
 .PHONY: rundep
 rundep:
 	docker kill testkafka
@@ -13,4 +17,5 @@ rundep:
 .PHONY: mockkafka
 mockkafka:
 	 mockery -case "underscore" -dir $$GOPATH/src/github.com/Shopify/sarama -output ./lib/mocks -name="(Client)|(AsyncProducer)|(Consumer)|(OffsetManager)|(PartitionConsumer)|(PartitionOffsetManager)"
+
 
