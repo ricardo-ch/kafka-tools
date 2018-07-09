@@ -53,6 +53,7 @@ func newManualProducer(brokers []string) (sarama.AsyncProducer, error) {
 	cfg.Net.MaxOpenRequests = 1
 	cfg.Producer.Flush.Frequency = 100 * time.Millisecond
 	cfg.Producer.Partitioner = func(topic string) sarama.Partitioner { return sarama.NewManualPartitioner(topic) }
+	cfg.Producer.MaxMessageBytes = 40000000 // this is check before compression
 
 	// Currently there is no way to neither figure out the original message encoding nor using a different one for each messages
 	// However we may need to use one if message is big. May as well compress, in doubt
@@ -87,7 +88,7 @@ func newClient(brokers []string) (sarama.Client, error) {
 
 var counter = 0
 
-func printOk(s string) {
+func showProgress(s string) {
 	if counter%100 == 0 {
 		fmt.Println(s)
 	}
