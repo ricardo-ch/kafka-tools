@@ -13,3 +13,4 @@ rundep:
 .PHONY: mockkafka
 mockkafka:
 	 mockery -case "underscore" -dir $$GOPATH/src/github.com/Shopify/sarama -output ./lib/mocks -name="(Client)|(AsyncProducer)|(Consumer)|(OffsetManager)|(PartitionConsumer)|(PartitionOffsetManager)"
+

@@ -132,7 +132,7 @@ func Test_clonePartition_NoKill(t *testing.T) {
 	})
 	defer patch.Unpatch()
 
-	target := func(partition int32, offset int64) bool { return partition == 1 && offset == 5 }
+	target := func(msg *sarama.ConsumerMessage) bool { return msg.Partition == 1 && msg.Offset == 5 }
 	oldGroupOffset := map[string]map[int32]int64{
 		"group1": {
 			0: 40,
