@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/Shopify/sarama"
 	"github.com/pkg/errors"
+	"gopkg.in/cheggaaa/pb.v1"
 	"log"
 	"time"
 )
@@ -95,6 +96,9 @@ func clonePartition(
 
 	currentOffset := int64(0)
 
+	progressBar := pb.New64(maxOffset)
+	progressBar.Start()
+
 loop:
 	for {
 		select {
@@ -141,7 +145,7 @@ loop:
 				}
 			}
 
-			showProgress(fmt.Sprintf("partition:%v, offset:%v", msg.Partition, msg.Offset))
+			progressBar.Set64(currentOffset)
 
 			producer.Input() <- msgP
 			if currentOffset >= maxOffset {
@@ -160,6 +164,7 @@ loop:
 		fmt.Println("did not quite get the last offset, maybe this is an exactly once topic")
 	}
 
+	progressBar.FinishPrint(fmt.Sprintf("partition: %v", partition))
 	return newGroupOffsetDelta, nil
 }
 
