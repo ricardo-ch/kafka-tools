@@ -5,6 +5,7 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/pkg/errors"
 	"log"
+	"time"
 )
 
 // return true to kill message
@@ -93,56 +94,72 @@ func clonePartition(
 	defer producer.Close()
 
 	currentOffset := int64(0)
-	for msg := range partitionConsumer.Messages() {
-		currentOffset = msg.Offset
-		if istTarget(msg) {
-			fmt.Printf("found tagrget, removing: %v\n", string(msg.Value))
-			if currentOffset >= maxOffset {
-				break
-			} else {
-				continue
-			}
-		}
 
-		// Increment offset delta of consumer groups
-		for consumerGroup := range oldGroupOffset {
-			if msg.Offset < oldGroupOffset[consumerGroup][msg.Partition] {
-				if newGroupOffsetDelta[consumerGroup] == nil {
-					newGroupOffsetDelta[consumerGroup] = map[int32]int64{}
+loop:
+	for {
+		select {
+		case msg, open := <-partitionConsumer.Messages():
+			if !open {
+				break loop
+			}
+
+			currentOffset = msg.Offset
+			if istTarget(msg) {
+				fmt.Printf("found tagrget, removing: %v\n", string(msg.Value))
+				if currentOffset >= maxOffset {
+					break loop
+				} else {
+					continue
 				}
-				newGroupOffsetDelta[consumerGroup][msg.Partition]++
 			}
-		}
 
-		msgP := &sarama.ProducerMessage{
-			Topic:     topicSink,
-			Partition: msg.Partition,
-			Timestamp: msg.Timestamp,
-		}
-		if msg.Value != nil {
-			msgP.Value = sarama.ByteEncoder(msg.Value)
-		}
-		if msg.Key != nil {
-			msgP.Key = sarama.ByteEncoder(msg.Key)
-		}
-
-		for _, header := range msg.Headers {
-			if header != nil {
-				msgP.Headers = append(msgP.Headers, *header)
+			// Increment offset delta of consumer groups
+			for consumerGroup := range oldGroupOffset {
+				if msg.Offset < oldGroupOffset[consumerGroup][msg.Partition] {
+					if newGroupOffsetDelta[consumerGroup] == nil {
+						newGroupOffsetDelta[consumerGroup] = map[int32]int64{}
+					}
+					newGroupOffsetDelta[consumerGroup][msg.Partition]++
+				}
 			}
-		}
+
+			msgP := &sarama.ProducerMessage{
+				Topic:     topicSink,
+				Partition: msg.Partition,
+				Timestamp: msg.Timestamp,
+			}
+			if msg.Value != nil {
+				msgP.Value = sarama.ByteEncoder(msg.Value)
+			}
+			if msg.Key != nil {
+				msgP.Key = sarama.ByteEncoder(msg.Key)
+			}
+
+			for _, header := range msg.Headers {
+				if header != nil {
+					msgP.Headers = append(msgP.Headers, *header)
+				}
+			}
 
 			showProgress(fmt.Sprintf("partition:%v, offset:%v", msg.Partition, msg.Offset))
 
-		producer.Input() <- msgP
-		if currentOffset >= maxOffset {
-			break
+			producer.Input() <- msgP
+			if currentOffset >= maxOffset {
+				break loop
+			}
+		case <-time.After(3 * time.Second):
+			break loop
 		}
 	}
 
-	if currentOffset < maxOffset {
+	if currentOffset < maxOffset-1 {
 		return nil, errors.New("did not processed the whole topic")
+	} else if currentOffset == maxOffset-1 {
+		// partitionConsumer does not return control messages so timeout is used in order not to hang on last message
+		// TODO go deeper in api and use something that does get access to control records
+		fmt.Println("did not quite get the last offset, maybe this is an exactly once topic")
 	}
+
 	return newGroupOffsetDelta, nil
 }
 
