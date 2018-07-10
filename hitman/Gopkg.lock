@@ -2,10 +2,10 @@
 
 
 [[projects]]
+  branch = "master"
   name = "github.com/Shopify/sarama"
   packages = ["."]
-  revision = "35324cf48e33d8260e1c7c18854465a904ade249"
-  version = "v1.17.0"
+  revision = "f7df95cff1bc4d14a4194a5be4c88a86253afb98"
 
 [[projects]]
   name = "github.com/ahmetb/go-linq"
@@ -112,6 +112,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "7c359e973fdc07a46e2e59fc63004b7b970665cef6cc6c3ae735004ed3974484"
+  inputs-digest = "bf41faae76080b16fa1f38e85b146e6c168fdd7ad87358ce27a570dfa265814b"
   solver-name = "gps-cdcl"
   solver-version = 1

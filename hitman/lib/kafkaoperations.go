@@ -140,22 +140,23 @@ func EnsureConsumerGroupsInactive(client sarama.Client, consumerGroups []string)
 			return err
 		}
 
+		//TODO not sure I actually need to call the coordinator, if not I could make only one query
 		req := sarama.DescribeGroupsRequest{
-			Groups: consumerGroups,
+			Groups: []string{consumerGroup},
 		}
 		description, err := broker.DescribeGroups(&req)
 		if err != nil {
 			return err
 		}
+
 		if len(description.Groups) <= 0 {
 			return errors.New("no response for describe group")
 		}
 		if description.Groups[0].Err != sarama.ErrNoError {
 			return description.Groups[0].Err
 		}
-
 		if len(description.Groups[0].Members) > 0 {
-			log.Printf("membe %v is active: ", description.Groups[0].State)
+			log.Printf("membre %v is active (%v) with %v members", consumerGroup, description.Groups[0].State, len(description.Groups[0].Members))
 			activeMember++
 		}
 	}
