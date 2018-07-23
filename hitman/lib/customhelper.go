@@ -78,9 +78,3 @@ func newManualProducer(brokers []string) (sarama.AsyncProducer, error) {
 
 	return producer, nil
 }
-
-func newClient(brokers []string) (sarama.Client, error) {
-	cfg := sarama.NewConfig()
-	cfg.Version = sarama.V1_1_0_0
-	return sarama.NewClient(brokers, cfg)
-}

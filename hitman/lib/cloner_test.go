@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"testing"
 	"time"
+	ktbox "github.com/ricardo-ch/kafka-tools/ktbox/lib"
 )
 
 func Test_CloneTopic(t *testing.T) {
@@ -122,12 +123,12 @@ func Test_clonePartition_NoKill(t *testing.T) {
 	})
 	defer patch.Unpatch()
 
-	patch = monkey.Patch(GetCurrentMaxTopicOffset, func(client sarama.Client, topic string) (map[int32]int64, error) {
+	patch = monkey.Patch(ktbox.GetCurrentMaxTopicOffset, func(client sarama.Client, topic string) (map[int32]int64, error) {
 		return map[int32]int64{0: 42, 1: 7}, nil
 	})
 	defer patch.Unpatch()
 
-	patch = monkey.Patch(GetCurrentMinTopicOffset, func(client sarama.Client, topic string) (map[int32]int64, error) {
+	patch = monkey.Patch(ktbox.GetCurrentMinTopicOffset, func(client sarama.Client, topic string) (map[int32]int64, error) {
 		return map[int32]int64{0: 42, 1: 4}, nil
 	})
 	defer patch.Unpatch()

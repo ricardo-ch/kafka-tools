@@ -7,6 +7,7 @@ import (
 	"gopkg.in/cheggaaa/pb.v1"
 	"log"
 	"time"
+	ktbox "github.com/ricardo-ch/kafka-tools/ktbox/lib"
 )
 
 // return true to kill message
@@ -56,13 +57,13 @@ func clonePartition(
 
 	newGroupOffsetDelta := map[string]map[int32]int64{}
 
-	maxTopicOffset, err := GetCurrentMaxTopicOffset(client, topicSource)
+	maxTopicOffset, err := ktbox.GetCurrentMaxTopicOffset(client, topicSource)
 	if err != nil {
 		return nil, err
 	}
 	maxOffset := maxTopicOffset[partition] - 1 // -1 because topic offset actually mean the offset of next posted message
 
-	minTopicOffset, err := GetCurrentMinTopicOffset(client, topicSource)
+	minTopicOffset, err := ktbox.GetCurrentMinTopicOffset(client, topicSource)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +170,7 @@ loop:
 }
 
 func initGroupOffsetAtTopicEnd(client sarama.Client, topic string, groups []string) (map[string]map[int32]int64, error) {
-	topicOffset, err := GetCurrentMaxTopicOffset(client, topic)
+	topicOffset, err := ktbox.GetCurrentMaxTopicOffset(client, topic)
 	if err != nil {
 		return nil, err
 	}

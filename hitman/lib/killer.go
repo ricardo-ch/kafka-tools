@@ -5,6 +5,7 @@ import (
 	"github.com/ahmetb/go-linq"
 	"github.com/pkg/errors"
 	"time"
+	ktbox "github.com/ricardo-ch/kafka-tools/ktbox/lib"
 )
 
 var intermediateTopic = "kafka-hitman-work"
@@ -17,7 +18,7 @@ func SetIntermediateTopic(topic string) {
 // create a temporary topic in the expected state so that you can assert the operation is doing what you expect
 // return offset of groups on this temporary topic matching message of original topic
 func CreateWorkTopic(brokers []string, topic string, contract KillContract) (map[string]map[int32]int64, error) {
-	client, err := newClient(brokers)
+	client, err := ktbox.NewClient(brokers)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +52,7 @@ func CreateWorkTopic(brokers []string, topic string, contract KillContract) (map
 // This is the risky step that definitely alter your data, you should check that every thing is ok previously
 // 	tmpGroupOffset: offset of consumer group on workTopic. Used to match new offset of consumer groups after transformation
 func Commit(brokers []string, topic string, tmpGroupOffset map[string]map[int32]int64) (err error) {
-	client, err := newClient(brokers)
+	client, err := ktbox.NewClient(brokers)
 	if err != nil {
 		return err
 	}
@@ -64,7 +65,7 @@ func Commit(brokers []string, topic string, tmpGroupOffset map[string]map[int32]
 	}
 	//TODO use acl to block write on topicSource
 
-	err = CleanTopic(client, topic)
+	err = ktbox.CleanTopic(client, topic)
 	if err != nil {
 		return err
 	}
@@ -84,11 +85,11 @@ func Commit(brokers []string, topic string, tmpGroupOffset map[string]map[int32]
 // CleanUp remove data from work topic.
 // Once `Commit` and `Cleanup` are called, data is irremediably altered
 func CleanUp(brokers []string) error {
-	client, err := newClient(brokers)
+	client, err := ktbox.NewClient(brokers)
 	if err != nil {
 		return err
 	}
-	err = CleanTopic(client, intermediateTopic)
+	err = ktbox.CleanTopic(client, intermediateTopic)
 	if err != nil {
 		return err
 	}
@@ -173,7 +174,7 @@ func ensureTopics(client sarama.Client, topicSource string, intermediateTopic st
 		}
 	}
 
-	err = CleanTopic(client, intermediateTopic)
+	err = ktbox.CleanTopic(client, intermediateTopic)
 	if err != nil {
 		return err
 	}
