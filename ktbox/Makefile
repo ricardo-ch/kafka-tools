@@ -6,6 +6,15 @@ MOCKERY_PATH :=  $(shell  [ -z "$${GOBIN}" ] && echo $${GOPATH}/bin/mockery ||  
 build:
 	CGO_ENABLED=0 go build -o ./ktbox -a -ldflags '-s' -installsuffix cgo main.go
 
+.PHONY: build-all
+build-all:
+	GOOS=linux CGO_ENABLED=0 go build -o ./bin/ktbox -a -ldflags '-s' -installsuffix cgo main.go
+	GOOS=darwin CGO_ENABLED=0 go build -o ./bin/ktbox_mac -a -ldflags '-s' -installsuffix cgo main.go
+	GOOS=windows CGO_ENABLED=0 go build -o ./bin/ktbox.exe -a -ldflags '-s' -installsuffix cgo main.go
+	chmod +x ./bin/ktbox
+	chmod +x ./bin/ktbox_mac
+
+
 .PHONY: rundep
 rundep:
 	docker kill testkafka
