@@ -1,8 +1,10 @@
+# /!\ Not ready yet. Do not use it
+
 # How to check output at each step
 
 ```
 topicSource=[YOUR_TOPIC]
-brokers=rm-be-k8k73.beta.local:9092
+brokers=[BROKERS]
 
 for i in {0..9}
 do
