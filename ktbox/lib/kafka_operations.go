@@ -2,6 +2,7 @@ package lib
 
 import (
 	"github.com/Shopify/sarama"
+	"github.com/ahmetb/go-linq"
 	"time"
 )
 
@@ -12,7 +13,8 @@ func NewClient(brokers []string) (sarama.Client, error) {
 }
 
 // Remove messages from a kafka topic
-func CleanTopic(client sarama.Client, topic string) error {
+// Clean only specific partition using partitions (nil or empty for all)
+func CleanTopic(client sarama.Client, topic string, partitions []int32) error {
 	topicsOffset, err := GetCurrentMaxTopicOffset(client, topic)
 	if err != nil {
 		return err
@@ -20,6 +22,10 @@ func CleanTopic(client sarama.Client, topic string) error {
 
 	//Delete by partition because need to query the leader
 	for partition, offset := range topicsOffset {
+		if len(partitions) > 0 && !linq.From(partitions).Contains(partition) {
+			continue
+		}
+
 		broker, err := client.Leader(topic, partition)
 		if err != nil {
 			return err

@@ -4,8 +4,8 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/ahmetb/go-linq"
 	"github.com/pkg/errors"
-	"time"
 	ktbox "github.com/ricardo-ch/kafka-tools/ktbox/lib"
+	"time"
 )
 
 var intermediateTopic = "kafka-hitman-work"
@@ -65,7 +65,7 @@ func Commit(brokers []string, topic string, tmpGroupOffset map[string]map[int32]
 	}
 	//TODO use acl to block write on topicSource
 
-	err = ktbox.CleanTopic(client, topic)
+	err = ktbox.CleanTopic(client, topic, nil)
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func CleanUp(brokers []string) error {
 	if err != nil {
 		return err
 	}
-	err = ktbox.CleanTopic(client, intermediateTopic)
+	err = ktbox.CleanTopic(client, intermediateTopic, nil)
 	if err != nil {
 		return err
 	}
@@ -174,7 +174,7 @@ func ensureTopics(client sarama.Client, topicSource string, intermediateTopic st
 		}
 	}
 
-	err = ktbox.CleanTopic(client, intermediateTopic)
+	err = ktbox.CleanTopic(client, intermediateTopic, nil)
 	if err != nil {
 		return err
 	}

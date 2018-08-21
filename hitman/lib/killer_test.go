@@ -4,11 +4,11 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/bouk/monkey"
 	"github.com/ricardo-ch/kafka-tools/hitman/lib/mocks"
+	ktbox "github.com/ricardo-ch/kafka-tools/ktbox/lib"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"reflect"
 	"testing"
-	ktbox "github.com/ricardo-ch/kafka-tools/ktbox/lib"
 )
 
 func Test_ensureTopic_ok(t *testing.T) {
@@ -49,7 +49,7 @@ func Test_ensureTopic_ok(t *testing.T) {
 }
 
 func Test_ensureTopics_sourceDoesNotExist(t *testing.T) {
-	patch := monkey.Patch(ktbox.CleanTopic, func(client sarama.Client, topic string) error { return nil })
+	patch := monkey.Patch(ktbox.CleanTopic, func(client sarama.Client, topic string, partitions []int32) error { return nil })
 	defer patch.Unpatch()
 
 	client := new(mocks.Client)
@@ -108,7 +108,7 @@ func Test_KillMessage_ok(t *testing.T) {
 	}
 	{
 		nbCalled := 0
-		patch = monkey.Patch(ktbox.CleanTopic, func(client sarama.Client, topic string) error {
+		patch = monkey.Patch(ktbox.CleanTopic, func(client sarama.Client, topic string, partitions []int32) error {
 			nbCalled++
 			switch nbCalled {
 			case 2:

@@ -38,7 +38,7 @@ func Test_CleanTopic(t *testing.T) {
 	client.On("Leader", "topic1", mock.Anything).Return(broker, nil)
 	client.On("GetOffset", "topic1", mock.Anything, sarama.OffsetNewest).Return(int64(42), nil)
 
-	err := CleanTopic(client, "topic1")
+	err := CleanTopic(client, "topic1", nil)
 	assert.NoError(t, err)
 	assert.True(t, called)
 }

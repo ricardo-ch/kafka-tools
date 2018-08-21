@@ -17,6 +17,7 @@ package cmd
 import (
 	"github.com/ricardo-ch/kafka-tools/ktbox/lib"
 	"github.com/spf13/cobra"
+	"strconv"
 )
 
 // cleanTopicCmd represents the cleanTopic command
@@ -25,11 +26,20 @@ var (
 		Use:   "clean-topic",
 		Short: "Remove messages from topic",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var partitionList []int32
+			for _, partition := range partitions {
+				partitionID, err := strconv.Atoi(partition)
+				if err != nil {
+					return err
+				}
+				partitionList = append(partitionList, int32(partitionID))
+			}
+
 			client, err := lib.NewClient(getBrokerList())
 			if err != nil {
 				return err
 			}
-			err = lib.CleanTopic(client, topic)
+			err = lib.CleanTopic(client, topic, partitionList)
 			if err != nil {
 				return err
 			}
@@ -37,7 +47,8 @@ var (
 		},
 	}
 
-	topic string
+	topic      string
+	partitions []string
 )
 
 func init() {
@@ -45,4 +56,6 @@ func init() {
 
 	cleanTopicCmd.Flags().StringVarP(&topic, "topic", "t", "", "topic")
 	cleanTopicCmd.MarkFlagRequired("topic")
+
+	cleanTopicCmd.Flags().StringArrayVarP(&partitions, "partitions", "p", nil, "partitions")
 }
